@@ -261,11 +261,13 @@ int32_t on_input(android_app*, AInputEvent* e) {
             uint64_t b = touch_hit(x / g_w, y / g_h, g_w / g_h);
             bool left = !b && touch_stick_side(x / g_w);
             Stick stick = b ? kNoStick : left ? kLeftStick : touch_right_stick() ? kRightStick : kNoStick;
+            if (b) haptic_tap();  // a click under the thumb (NX_TOUCH_HAPTICS, platform_android.cpp)
             if (b || stick) g_touches.push_back({id, x, y, x, y, stick, b, now});
         } else {
             bool left = x < g_w * 0.5f;
-            g_touches.push_back({id, x, y, x, y, left ? kLeftStick : kNoStick,
-                                 left ? 0 : touch_button(x, y), now});
+            uint64_t b = left ? 0 : touch_button(x, y);
+            if (b) haptic_tap();
+            g_touches.push_back({id, x, y, x, y, left ? kLeftStick : kNoStick, b, now});
         }
     } else if (kind == AMOTION_EVENT_ACTION_UP || kind == AMOTION_EVENT_ACTION_POINTER_UP ||
                kind == AMOTION_EVENT_ACTION_CANCEL) {

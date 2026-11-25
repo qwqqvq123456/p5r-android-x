@@ -247,6 +247,7 @@ bool headless() {  // NX_HEADLESS (platform.h)
 }
 
 void rumble(float) {}  // no vibration here
+void haptic_tap() {}  // no touch haptics here
 
 void read_pad(PadState& p) {
     XINPUT_STATE xs{};

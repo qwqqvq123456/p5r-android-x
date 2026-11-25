@@ -355,6 +355,10 @@ public class Launcher extends Activity {
         options.add(new Option("NX_TOUCH_OPACITY", "Opacidad de los botones", "Button opacity",
                 new String[] {"50", "85", "100"}, new String[] {"Baja", "Normal", "Alta"},
                 new String[] {"Low", "Normal", "High"}, 1));
+        options.add(new Option("NX_TOUCH_HAPTICS", "Vibración al pulsar", "Button vibration",
+                new String[] {"0", "35", "60", "100"},
+                new String[] {"Desactivada", "Suave", "Normal", "Fuerte"},
+                new String[] {"Off", "Light", "Normal", "Strong"}, 2));
         options.add(new Option("NX_NO_CROWD", "Gente / Multitudes de NPCs", "Crowd NPCs",
                 new String[] {"0", "1"},
                 new String[] {"Activada (normal)", "Desactivada (más FPS)"},

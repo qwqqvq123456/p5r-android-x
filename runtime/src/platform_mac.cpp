@@ -358,6 +358,7 @@ static void sample_input() {
 }
 
 void rumble(float) {}  // no vibration here
+void haptic_tap() {}  // no touch haptics here
 
 void read_pad(PadState& p) {
     std::lock_guard lk(g_pad_lock);

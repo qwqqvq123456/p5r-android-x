@@ -1239,6 +1239,159 @@ void nx::plat::rumble(float strength) {
     if (strength > 0.0f) std::call_once(started, [] { nx::plat::start_thread(rumble_thread, nullptr, 256u << 10); });
 }
 
+// ---- touch haptics (plat::haptic_tap) -------------------------------------------------------------------------
+// A click under the thumb when an on-screen button goes down. Not the game's rumble (plat::rumble): its own thread,
+// its own Vibrator handle and a short one-shot instead of a 200 ms effect renewed while the game holds a motor. The
+// effect is tagged as touch feedback (VibrationAttributes.USAGE_TOUCH, Android 11+), so the player's system touch
+// vibration settings apply to it, as they would to any button of the phone's own UI. Strength in percent:
+// NX_TOUCH_HAPTICS=<0..100> in config.txt (default 60; 0: off). Clicks closer than kHapticGapNs are dropped, so two
+// thumbs landing together make one click.
+
+namespace {
+
+constexpr uint64_t kHapticGapNs = 40'000'000;  // 40 ms
+constexpr int kHapticMs = 18;                  // the click's length
+
+std::mutex g_haptic_m;
+std::condition_variable g_haptic_cv;
+bool g_haptic_pending = false;             // a click waits for the thread (under g_haptic_m)
+std::atomic<uint64_t> g_haptic_last_ns{0};  // when the last one was taken
+
+int haptics_percent() {
+    static const int pct = [] {
+        const char* e = std::getenv("NX_TOUCH_HAPTICS");
+        return e ? std::clamp(std::atoi(e), 0, 100) : 60;
+    }();
+    return pct;
+}
+
+// The device's vibrator, on the haptics thread: effect, attributes and the two vibrate overloads it can use.
+struct Haptic {
+    JNIEnv* env = nullptr;
+    jobject vibrator = nullptr;  // the device's own (global ref)
+    bool amplitude = false;
+    jclass effect_class = nullptr;  // global ref
+    jmethodID one_shot = nullptr;   // VibrationEffect.createOneShot(long, int)
+    jobject attrs = nullptr;        // VibrationAttributes USAGE_TOUCH (Android 11+, global ref)
+    jmethodID vibrate_attrs = nullptr, vibrate_plain = nullptr;
+
+    bool failed() {
+        if (!env->ExceptionCheck()) return false;
+        env->ExceptionClear();
+        return true;
+    }
+    jclass find(const char* name) {
+        jclass c = env->FindClass(name);
+        if (failed() || !c) return nullptr;
+        jclass g = static_cast<jclass>(env->NewGlobalRef(c));
+        env->DeleteLocalRef(c);
+        return g;
+    }
+
+    bool init() {
+        const int sdk = android_get_device_api_level();
+        jobject act = g_activity->clazz;
+        jclass act_class = env->GetObjectClass(act);
+        jmethodID get_service = act_class ? env->GetMethodID(act_class, "getSystemService",
+                                                             "(Ljava/lang/String;)Ljava/lang/Object;")
+                                          : nullptr;
+        if (act_class) env->DeleteLocalRef(act_class);
+        if (failed() || !get_service) return false;
+        jstring name = env->NewStringUTF("vibrator");
+        jobject v = env->CallObjectMethod(act, get_service, name);
+        env->DeleteLocalRef(name);
+        if (failed() || !v) return false;
+        vibrator = env->NewGlobalRef(v);
+        env->DeleteLocalRef(v);
+
+        jclass vc = find("android/os/Vibrator");
+        if (!vc) return false;
+        jmethodID has_amplitude = env->GetMethodID(vc, "hasAmplitudeControl", "()Z");
+        amplitude = has_amplitude && env->CallBooleanMethod(vibrator, has_amplitude);
+        if (failed()) amplitude = false;
+        vibrate_plain = env->GetMethodID(vc, "vibrate", "(Landroid/os/VibrationEffect;)V");
+        if (failed()) vibrate_plain = nullptr;
+        if (sdk >= 30) {
+            jmethodID with_attrs = env->GetMethodID(vc, "vibrate",
+                                                    "(Landroid/os/VibrationEffect;Landroid/os/VibrationAttributes;)V");
+            if (failed()) with_attrs = nullptr;
+            jclass vattr = find("android/os/VibrationAttributes");
+            if (vattr) {  // VibrationAttributes.createForUsage(USAGE_TOUCH)
+                jfieldID touch = env->GetStaticFieldID(vattr, "USAGE_TOUCH", "I");
+                jmethodID for_usage = env->GetStaticMethodID(vattr, "createForUsage",
+                                                             "(I)Landroid/os/VibrationAttributes;");
+                if (touch && for_usage && !failed()) {
+                    jobject a = env->CallStaticObjectMethod(vattr, for_usage, env->GetStaticIntField(vattr, touch));
+                    if (failed()) a = nullptr;
+                    if (a) attrs = env->NewGlobalRef(a);
+                    if (a) env->DeleteLocalRef(a);
+                }
+                if (failed()) attrs = nullptr;
+                env->DeleteGlobalRef(vattr);
+            }
+            if (attrs && with_attrs) vibrate_attrs = with_attrs;
+        }
+        if (vc) env->DeleteGlobalRef(vc);
+
+        effect_class = find("android/os/VibrationEffect");
+        if (!effect_class) return false;
+        one_shot = env->GetStaticMethodID(effect_class, "createOneShot", "(JI)Landroid/os/VibrationEffect;");
+        if (failed()) one_shot = nullptr;
+        nx::log("touch haptics: %s, strength %d%%",
+                !attrs ? "the device's vibrator" : vibrate_attrs ? "the device's vibrator (touch feedback)"
+                                                                 : "the device's vibrator (touch feedback unsupported)",
+                haptics_percent());
+        return one_shot && (vibrate_attrs || vibrate_plain);
+    }
+
+    void tap(int percent) {  // one click, blockingly (~1 ms of JNI)
+        const int amp = amplitude ? std::clamp(int(std::lround(float(percent) * 2.55f)), 1, 255) : -1;
+        jobject effect = env->CallStaticObjectMethod(effect_class, one_shot, jlong(kHapticMs), jint(amp));
+        if (failed() || !effect) return;
+        if (vibrate_attrs)
+            env->CallVoidMethod(vibrator, vibrate_attrs, effect, attrs);
+        else
+            env->CallVoidMethod(vibrator, vibrate_plain, effect);
+        failed();
+        env->DeleteLocalRef(effect);
+    }
+};
+
+void haptic_thread(void*) {
+    nx::plat::set_thread_name("haptic");
+    Haptic h;
+    if (!g_activity || g_activity->vm->AttachCurrentThread(&h.env, nullptr) != JNI_OK) return;
+    if (!h.init()) {
+        g_activity->vm->DetachCurrentThread();
+        return;
+    }
+    std::unique_lock lk(g_haptic_m);
+    for (;;) {
+        g_haptic_cv.wait(lk, [] { return g_haptic_pending; });
+        g_haptic_pending = false;
+        lk.unlock();
+        if (!nx::plat::window_minimized()) h.tap(haptics_percent());
+        lk.lock();
+    }
+}
+
+}  // namespace
+
+void nx::plat::haptic_tap() {
+    if (haptics_percent() == 0) return;
+    const uint64_t now = nx::plat::monotonic_ns();
+    const uint64_t last = g_haptic_last_ns.load(std::memory_order_relaxed);
+    if (now < last + kHapticGapNs) return;  // a second thumb, or a quick second tap: still one click
+    g_haptic_last_ns.store(now, std::memory_order_relaxed);
+    {
+        std::lock_guard lk(g_haptic_m);
+        g_haptic_pending = true;
+    }
+    g_haptic_cv.notify_one();
+    static std::once_flag started;
+    std::call_once(started, [] { nx::plat::start_thread(haptic_thread, nullptr, 128u << 10); });
+}
+
 // All-files access (Android 11+): needed to read Internal storage/<game title>. Asks for it by opening the system page.
 static bool has_all_files_access(android_app* app) {
     if (!app || !app->activity || !app->activity->vm) return true;

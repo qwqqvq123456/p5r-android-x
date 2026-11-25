@@ -1,0 +1,242 @@
+name: Release APK
+
+# Builds the Android APK and publishes it as a GitHub Release named after the version, which also becomes the tag:
+#   - push a tag v0.5.14            -> build that commit and publish v0.5.14
+#   - Actions -> Release APK -> Run  -> bump the version in games/p5r/AndroidManifest.xml, commit it, tag it, build it,
+#                                       publish it (the manifest's versionName is the version, versionCode goes up by 1)
+# The APK is signed with the debug key unless P5R_KEYSTORE_BASE64 / P5R_KEYSTORE_PASSWORD / P5R_KEY_ALIAS /
+# P5R_KEY_PASSWORD are set as secrets (a keystore made once, e.g. keytool -genkeypair -keystore p5r.jks ...).
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "指定版本号（如 0.5.14，可带 v；留空则按 bump 递增）"
+        type: string
+        required: false
+        default: ""
+      bump:
+        description: "版本递增方式（version 留空时生效）"
+        type: choice
+        options: [patch, minor, major, none]
+        default: patch
+      prerelease:
+        description: "标记为预发布（pre-release）"
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      VULKAN_SDK: ${{ github.workspace }}/private/third_party/Vulkan-Headers-1.4.357
+      GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+          fetch-depth: 0
+
+      - name: Resolve the version
+        id: ver
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_BUMP: ${{ inputs.bump || 'patch' }}
+        run: |
+          set -euo pipefail
+          manifest=games/p5r/AndroidManifest.xml
+          cur_name="$(sed -n 's/.*android:versionName="\([^"]*\)".*/\1/p' "$manifest" | head -n1)"
+          cur_code="$(sed -n 's/.*android:versionCode="\([0-9]*\)".*/\1/p' "$manifest" | head -n1)"
+          [ -n "$cur_name" ] && [ -n "$cur_code" ] || { echo "cannot read the manifest version" >&2; exit 1; }
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            # A tag build publishes the tree it points at; the manifest should already say the same version.
+            name="${GITHUB_REF_NAME#v}"
+            tag="${GITHUB_REF_NAME}"
+            code="$cur_code"
+            if [ "$cur_name" != "$name" ]; then
+              echo "::warning::tag ${tag} does not match AndroidManifest versionName ${cur_name}"
+            fi
+          elif [ -n "${INPUT_VERSION:-}" ]; then
+            name="${INPUT_VERSION#v}"
+            tag="v${name}"
+            code=$((cur_code + 1))
+          else
+            IFS=. read -r major minor patch <<< "$cur_name"
+            case "${INPUT_BUMP}" in
+              major) major=$((major + 1)); minor=0; patch=0 ;;
+              minor) minor=$((minor + 1)); patch=0 ;;
+              patch) patch=$((patch + 1)) ;;
+              none) ;;
+              *) echo "unknown bump: ${INPUT_BUMP}" >&2; exit 2 ;;
+            esac
+            name="${major}.${minor}.${patch}"
+            tag="v${name}"
+            code=$((cur_code + 1))
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "Version ${name} (versionCode ${code}), tag ${tag}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check the tag is new
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "::error::tag ${TAG} already exists: pick a higher version (or delete the tag first)"
+            exit 1
+          fi
+
+      - name: Write the version into the manifest
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          NAME: ${{ steps.ver.outputs.name }}
+          CODE: ${{ steps.ver.outputs.code }}
+        run: |
+          set -euo pipefail
+          manifest=games/p5r/AndroidManifest.xml
+          sed -i -E "s/android:versionCode=\"[0-9]+\"/android:versionCode=\"${CODE}\"/; \
+                     s/android:versionName=\"[^\"]*\"/android:versionName=\"${NAME}\"/" "$manifest"
+          grep -n 'android:version' "$manifest"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up the Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platform-tools
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;28.2.13676358"
+
+      - name: Build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake ninja-build zip unzip curl
+          mkdir -p private/third_party
+          git clone --depth 1 --branch v1.4.357 \
+            https://github.com/KhronosGroup/Vulkan-Headers private/third_party/Vulkan-Headers-1.4.357
+          mkdir -p private/third_party/ryubing
+          curl -fsSL -o private/third_party/ryubing.tar.gz \
+            https://codeberg.org/Software_arch/Ryubing/archive/a82350bb77.tar.gz
+          tar -xzf private/third_party/ryubing.tar.gz -C private/third_party/ryubing --strip-components=1
+          rm private/third_party/ryubing.tar.gz
+
+      - name: Build the shader translator
+        run: docker run --rm -v "$PWD:/src" -w /src mcr.microsoft.com/dotnet/sdk:10.0 sh games/p5r/tools/build_harness_android.sh
+
+      # Optional repository secrets: P5R_KEYSTORE_BASE64 (base64 of a JKS), P5R_KEYSTORE_PASSWORD,
+      # P5R_KEY_ALIAS and P5R_KEY_PASSWORD. Without them the build uses a generated debug key.
+      - name: Prepare signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.P5R_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.P5R_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.P5R_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.P5R_KEY_PASSWORD }}
+        run: |
+          mkdir -p "$HOME/.android"
+          if [ -n "${KEYSTORE_BASE64:-}" ]; then
+            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/p5r.jks"
+            {
+              echo "P5R_KEYSTORE=$HOME/.android/p5r.jks"
+              echo "P5R_KEYSTORE_PASSWORD=${KEYSTORE_PASSWORD:-android}"
+              echo "P5R_KEY_ALIAS=${KEY_ALIAS:-androiddebugkey}"
+              echo "P5R_KEY_PASSWORD=${KEY_PASSWORD:-${KEYSTORE_PASSWORD:-android}}"
+            } >> "$GITHUB_ENV"
+          else
+            keytool -genkeypair -v -keystore "$HOME/.android/debug.keystore" -storepass android \
+              -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: Build the APK
+        run: bash games/p5r/tools/build_android.sh
+
+      - name: Package the release
+        env:
+          NAME: ${{ steps.ver.outputs.name }}
+        run: |
+          set -euo pipefail
+          apk=private/p5r/apk_nce/p5r.apk
+          aapt2="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}/build-tools/35.0.0/aapt2"
+          "$aapt2" dump badging "$apk" | sed -n '1,3p'
+          mkdir -p dist
+          cp "$apk" "dist/p5r-${NAME}.apk"
+          (cd dist && sha256sum "p5r-${NAME}.apk" > "p5r-${NAME}.apk.sha256")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: p5r-apk-${{ steps.ver.outputs.name }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Commit the version bump and tag it
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          NAME: ${{ steps.ver.outputs.name }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add games/p5r/AndroidManifest.xml
+          # [skip ci]: the tag below starts the release workflow; the branch build would only repeat this one.
+          git commit -m "chore(release): ${TAG} [skip ci]"
+          git tag -a "${TAG}" -m "${TAG}"
+          git push origin "HEAD:${{ github.ref_name }}"
+          git push origin "${TAG}"
+
+      - name: Publish the GitHub Release
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+          NAME: ${{ steps.ver.outputs.name }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          flags=()
+          if [ "${PRERELEASE}" = "true" ]; then flags+=(--prerelease); fi
+          prev="$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
+          {
+            echo "Persona 5 Royal for Android, built from \`$(git rev-parse --short HEAD)\`."
+            echo
+            echo "Install on an arm64 device running Android 10 or newer. The APK holds no game code or data: import your own dump from the launcher."
+            echo
+            echo "The tag matches \`android:versionName\` in \`games/p5r/AndroidManifest.xml\`."
+            echo
+            if [ -n "$prev" ]; then
+              echo "### Changes since ${prev}"
+              echo
+              git log --no-merges --pretty='- %s (%h)' "${prev}..${TAG}" | head -60
+            else
+              echo "### Changes"
+              echo
+              git log --no-merges --pretty='- %s (%h)' -20 "${TAG}^{commit}"
+            fi
+          } > dist/release-notes.md
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" dist/*.apk dist/*.sha256 --clobber
+          else
+            gh release create "${TAG}" dist/*.apk dist/*.sha256 --title "P5R Android ${NAME}" \
+              --notes-file dist/release-notes.md "${flags[@]}"
+          fi
+          echo "Released ${TAG}" >> "$GITHUB_STEP_SUMMARY"

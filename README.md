@@ -45,7 +45,7 @@ placed in `Internal storage/Persona 5 Royal/mods/<ModName>/romfs/...` (see [docs
 ### Options
 
 Text language, resolution (360p, 480p, 720p, or 1080p), interface resolution, graphics (texture detail), frame rate
-cap (30, or 60 experimental), shadows, FPS counter, **Fullscreen (stretch)**, **Crowd NPCs** (toggle off to boost FPS in busy areas like Shibuya), **Post-processing / Bloom** (toggle off for lighter GPU load), **Touch controls** (show, size, opacity, L3/R3 buttons, and custom layout editor), **Touch stick & camera sensitivity** (50% to 250%), **Physical gamepad layout** (Nintendo vs Xbox/Android A/B and X/Y swap), **Import CPK** (for fan translations / language packs), and **Export logs** (generate and share debug logs directly from the device).
+cap (30, or 60 experimental), shadows, FPS counter, **Fullscreen (stretch)**, **Crowd NPCs** (toggle off to boost FPS in busy areas like Shibuya), **Post-processing / Bloom** (toggle off for lighter GPU load), **Touch controls** (show, size, opacity, L3/R3 buttons, and custom layout editor), **Button vibration** (off, light, normal, or strong: a click under the thumb when an on-screen button goes down), **Touch stick & camera sensitivity** (50% to 250%), **Physical gamepad layout** (Nintendo vs Xbox/Android A/B and X/Y swap), **Import CPK** (for fan translations / language packs), and **Export logs** (generate and share debug logs directly from the device).
 
 ## Requirements
 
@@ -114,6 +114,18 @@ The APK is signed with your Android debug key (`%USERPROFILE%\.android\debug.key
 androiddebugkey -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -validity 10000`). Without `-Nce` the script
 builds the recompiled flavour, which needs your own recompiled game code in `private\p5r\gen` (see `docs/RECOMP.md`)
 and must never be shared.
+
+### Automatic builds (this fork)
+
+Two workflows build everything here, so no PC is needed:
+
+- **Release APK** ([workflow](.github/workflows/release-apk.yml)) builds the APK and publishes it as a GitHub Release
+  named after the version, from a tag (`v0.5.14`) or from **Actions → Release APK → Run workflow** (the version in
+  `games/p5r/AndroidManifest.xml` is bumped, committed, tagged and released; `versionCode` goes up by one).
+- **Sync upstream** ([workflow](.github/workflows/sync-upstream.yml)) merges the upstream project into this fork every
+  night; a conflicted merge leaves a draft pull request to resolve in the web editor.
+
+See [docs/CI.md](docs/CI.md) for the details (secrets, tags, manual runs).
 
 ## Reporting problems
 

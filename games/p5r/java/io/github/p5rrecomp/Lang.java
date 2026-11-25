@@ -102,6 +102,10 @@ final class Lang {
         put("Large", "Grande", "Groß", "Grande", "Grande", "大", "크게", "大", "大");
         put("Button opacity", "Opacité des boutons", "Deckkraft der Tasten", "Opacità dei pulsanti",
                 "Opacidade dos botões", "ボタンの不透明度", "버튼 불투명도", "按键不透明度", "按鍵不透明度");
+        put("Button vibration", "Vibration des boutons", "Tastenvibration", "Vibrazione dei pulsanti",
+                "Vibração dos botões", "ボタンの振動", "버튼 진동", "按键震动", "按鍵震動");
+        put("Light", "Légère", "Leicht", "Leggera", "Leve", "弱", "약하게", "轻", "輕");
+        put("Strong", "Forte", "Stark", "Forte", "Forte", "強", "강하게", "强", "強");
         put("Controls position", "Position des commandes", "Position der Steuerung", "Posizione dei comandi",
                 "Posição dos controles", "操作ボタンの配置", "컨트롤 위치", "按键位置", "按鍵位置");
         put("Move", "Déplacer", "Verschieben", "Sposta", "Mover", "移動", "이동", "移动", "移動");

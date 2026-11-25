@@ -1,0 +1,105 @@
+name: Sync upstream
+
+# Keeps this fork level with the upstream project: every night (and on demand) the upstream main branch is merged into
+# this fork's main, our own commits included. A clean merge is pushed straight away; a conflicted one leaves a branch
+# plus a draft pull request, so the conflicts are solved in GitHub's web editor instead of on the runner.
+#
+# Upstream: the repository this one was forked from. Override it with a repository variable UPSTREAM_REPO
+# (Settings -> Secrets and variables -> Actions -> Variables) as "owner/repo", and the branch with UPSTREAM_BRANCH.
+# Optional secret SYNC_TOKEN (a PAT with contents + pull-requests write) when the default GITHUB_TOKEN may not push.
+on:
+  schedule:
+    - cron: "0 3 * * *"  # 03:00 UTC, 11:00 in China
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "合并成功后，自动递增版本号并发布 APK Release"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      UPSTREAM_REPO: ${{ vars.UPSTREAM_REPO || 'Brandon04Gonzalez/p5r-android' }}
+      UPSTREAM_BRANCH: ${{ vars.UPSTREAM_BRANCH || 'main' }}
+      GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
+      SYNC_BRANCH: sync/upstream
+    steps:
+      - name: Check out this fork
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        id: fetch
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch --no-tags --prune upstream "${UPSTREAM_BRANCH}"
+          upstream_ref="upstream/${UPSTREAM_BRANCH}"
+          echo "sha=$(git rev-parse --short "$upstream_ref")" >> "$GITHUB_OUTPUT"
+          if git merge-base --is-ancestor "$upstream_ref" HEAD; then
+            echo "Up to date with ${UPSTREAM_REPO}@${UPSTREAM_BRANCH} ($(git rev-parse --short "$upstream_ref"))."
+            echo "new=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "New=yes" >> "$GITHUB_OUTPUT"
+            echo "$(git rev-list --count HEAD.."$upstream_ref") new upstream commit(s):" >> "$GITHUB_STEP_SUMMARY"
+            git --no-pager log --oneline HEAD.."$upstream_ref" | head -30 >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Merge upstream into main
+        id: merge
+        if: steps.fetch.outputs.new == 'yes'
+        run: |
+          set -euo pipefail
+          upstream_ref="upstream/${UPSTREAM_BRANCH}"
+          echo "merged=no" >> "$GITHUB_OUTPUT"
+          if git merge --no-edit -m "chore: sync upstream ${UPSTREAM_REPO}@${UPSTREAM_BRANCH}" "$upstream_ref"; then
+            git push origin "HEAD:${{ github.event.repository.default_branch }}"
+            echo "merged=yes" >> "$GITHUB_OUTPUT"
+            echo "Merged ${UPSTREAM_REPO}@${UPSTREAM_BRANCH} into ${{ github.event.repository.default_branch }}." >> "$GITHUB_STEP_SUMMARY"
+          else
+            conflicts="$(git diff --name-only --diff-filter=U || true)"
+            git merge --abort
+            git push --force origin "${upstream_ref}:refs/heads/${SYNC_BRANCH}"
+            {
+              echo "上游有冲突，已推送分支 \`${SYNC_BRANCH}\` 并创建草稿 PR。"
+              echo
+              echo "冲突文件："
+              echo '```'
+              echo "$conflicts"
+              echo '```'
+              echo
+              echo "在 PR 页面点 **Resolve conflicts** 用网页编辑器解决即可。"
+            } > /tmp/sync-body.md
+            printf '%s\n' "$conflicts" >> "$GITHUB_STEP_SUMMARY"
+            existing="$(gh pr list --head "$SYNC_BRANCH" --state open --json number --jq '.[0].number' || true)"
+            if [ -n "$existing" ]; then
+              gh pr edit "$existing" --body-file /tmp/sync-body.md >/dev/null
+              echo "Updated pull request #${existing}."
+            else
+              gh pr create --draft --base "${{ github.event.repository.default_branch }}" --head "$SYNC_BRANCH" \
+                --title "chore: sync upstream ${UPSTREAM_REPO}@${UPSTREAM_BRANCH} (conflicts to resolve)" \
+                --body-file /tmp/sync-body.md
+            fi
+            echo "conflicts=yes" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Start a release for the merged main
+        if: steps.merge.outputs.merged == 'yes' && inputs.publish_release
+        run: gh workflow run release-apk.yml --ref "${{ github.event.repository.default_branch }}" -f bump=patch
