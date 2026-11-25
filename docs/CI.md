@@ -11,7 +11,7 @@
 | 触发 | 版本号来源 | 会发生什么 |
 | --- | --- | --- |
 | 推送 `v*` 标签（`git tag v0.5.14 && git push origin v0.5.14`） | 标签名 | 直接用该提交构建，发布同名 Release |
-| Actions → **Release APK** → Run workflow | `android:versionName` 按 `patch / minor / major` 递增，或手填 `version` | 改 `games/p5r/AndroidManifest.xml`（`versionCode` +1）→ 构建 → 提交并打标签 → 发布 Release |
+| Actions → **Release APK** → Run workflow | `android:versionName` 按 `patch / minor / major` 递增，或手填 `version` | 改 `games/p5r/AndroidManifest.xml`（`versionCode` +1）→ 构建 → 提交版本号 → 发布 Release（标签在发布时创建） |
 
 产物：
 

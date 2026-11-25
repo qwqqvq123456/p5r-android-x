@@ -190,21 +190,18 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-      - name: Commit the version bump and tag it
+      - name: Commit the version bump
         if: github.event_name == 'workflow_dispatch'
         env:
-          NAME: ${{ steps.ver.outputs.name }}
           TAG: ${{ steps.ver.outputs.tag }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add games/p5r/AndroidManifest.xml
-          # [skip ci]: the tag below starts the release workflow; the branch build would only repeat this one.
+          # [skip ci]: this build is the release; the tag is made below, by the release itself (no second build).
           git commit -m "chore(release): ${TAG} [skip ci]"
-          git tag -a "${TAG}" -m "${TAG}"
           git push origin "HEAD:${{ github.ref_name }}"
-          git push origin "${TAG}"
 
       - name: Publish the GitHub Release
         env:
@@ -236,7 +233,8 @@ jobs:
           if gh release view "${TAG}" >/dev/null 2>&1; then
             gh release upload "${TAG}" dist/*.apk dist/*.sha256 --clobber
           else
-            gh release create "${TAG}" dist/*.apk dist/*.sha256 --title "P5R Android ${NAME}" \
-              --notes-file dist/release-notes.md "${flags[@]}"
+            # The tag is created here, at the commit pushed above (or at the tagged commit for a tag build).
+            gh release create "${TAG}" dist/*.apk dist/*.sha256 --target "$(git rev-parse HEAD)" \
+              --title "P5R Android ${NAME}" --notes-file dist/release-notes.md "${flags[@]}"
           fi
           echo "Released ${TAG}" >> "$GITHUB_STEP_SUMMARY"
