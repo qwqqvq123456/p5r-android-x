@@ -212,7 +212,10 @@ jobs:
           set -euo pipefail
           flags=()
           if [ "${PRERELEASE}" = "true" ]; then flags+=(--prerelease); fi
-          prev="$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
+          # On a dispatch run the tag does not exist yet (the release makes it): the notes cover HEAD.
+          rev="${TAG}"
+          git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null || rev="HEAD"
+          prev="$(git describe --tags --abbrev=0 "${rev}^" 2>/dev/null || true)"
           {
             echo "Persona 5 Royal for Android, built from \`$(git rev-parse --short HEAD)\`."
             echo
@@ -223,11 +226,11 @@ jobs:
             if [ -n "$prev" ]; then
               echo "### Changes since ${prev}"
               echo
-              git log --no-merges --pretty='- %s (%h)' "${prev}..${TAG}" | head -60
+              git log --no-merges --pretty='- %s (%h)' "${prev}..${rev}" | head -60
             else
               echo "### Changes"
               echo
-              git log --no-merges --pretty='- %s (%h)' -20 "${TAG}^{commit}"
+              git log --no-merges --pretty='- %s (%h)' -20 "${rev}"
             fi
           } > dist/release-notes.md
           if gh release view "${TAG}" >/dev/null 2>&1; then
