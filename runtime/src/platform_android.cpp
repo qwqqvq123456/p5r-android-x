@@ -1242,10 +1242,10 @@ void nx::plat::rumble(float strength) {
 // ---- touch haptics (plat::haptic_tap) -------------------------------------------------------------------------
 // A click under the thumb when an on-screen button goes down. Not the game's rumble (plat::rumble): its own thread,
 // its own Vibrator handle and a short one-shot instead of a 200 ms effect renewed while the game holds a motor. The
-// effect is tagged as touch feedback (VibrationAttributes.USAGE_TOUCH, Android 11+), so the player's system touch
-// vibration settings apply to it, as they would to any button of the phone's own UI. Strength in percent:
-// NX_TOUCH_HAPTICS=<0..100> in config.txt (default 60; 0: off). Clicks closer than kHapticGapNs are dropped, so two
-// thumbs landing together make one click.
+// effect is tagged as touch feedback (VibrationAttributes.USAGE_TOUCH on Android 13+, AudioAttributes
+// USAGE_ASSISTANCE_SONIFICATION before), so the player's system touch vibration settings apply to it, as they would
+// to any button of the phone's own UI. Strength in percent: NX_TOUCH_HAPTICS=<0..100> in config.txt (default 60; 0:
+// off). Clicks closer than kHapticGapNs are dropped, so two thumbs landing together make one click.
 
 namespace {
 
@@ -1272,8 +1272,9 @@ struct Haptic {
     bool amplitude = false;
     jclass effect_class = nullptr;  // global ref
     jmethodID one_shot = nullptr;   // VibrationEffect.createOneShot(long, int)
-    jobject attrs = nullptr;        // VibrationAttributes USAGE_TOUCH (Android 11+, global ref)
-    jmethodID vibrate_attrs = nullptr, vibrate_plain = nullptr;
+    jobject attrs = nullptr;        // VibrationAttributes USAGE_TOUCH (Android 13+, global ref)
+    jobject audio = nullptr;        // AudioAttributes USAGE_ASSISTANCE_SONIFICATION (older, global ref)
+    jmethodID vibrate_attrs = nullptr, vibrate_audio = nullptr, vibrate_plain = nullptr;
 
     bool failed() {
         if (!env->ExceptionCheck()) return false;
@@ -1311,6 +1312,8 @@ struct Haptic {
         if (failed()) amplitude = false;
         vibrate_plain = env->GetMethodID(vc, "vibrate", "(Landroid/os/VibrationEffect;)V");
         if (failed()) vibrate_plain = nullptr;
+        // VibrationAttributes came with the vibrate() overload in Android 13; Android 11 and 12 take an
+        // AudioAttributes there instead, with the usage that means touch feedback (USAGE_ASSISTANCE_SONIFICATION).
         if (sdk >= 30) {
             jmethodID with_attrs = env->GetMethodID(vc, "vibrate",
                                                     "(Landroid/os/VibrationEffect;Landroid/os/VibrationAttributes;)V");
@@ -1331,6 +1334,30 @@ struct Haptic {
             }
             if (attrs && with_attrs) vibrate_attrs = with_attrs;
         }
+        if (!vibrate_attrs) {  // AudioAttributes.Builder().setUsage(USAGE_ASSISTANCE_SONIFICATION).build()
+            jmethodID with_audio = env->GetMethodID(vc, "vibrate",
+                                                    "(Landroid/os/VibrationEffect;Landroid/media/AudioAttributes;)V");
+            if (failed()) with_audio = nullptr;
+            jclass bc = find("android/media/AudioAttributes$Builder");
+            jmethodID ctor = bc ? env->GetMethodID(bc, "<init>", "()V") : nullptr;
+            jmethodID set_usage = bc ? env->GetMethodID(bc, "setUsage",
+                                                        "(I)Landroid/media/AudioAttributes$Builder;")
+                                     : nullptr;
+            jmethodID build = bc ? env->GetMethodID(bc, "build", "()Landroid/media/AudioAttributes;") : nullptr;
+            if (ctor && set_usage && build && with_audio && !failed()) {
+                jobject b = env->NewObject(bc, ctor);
+                jobject b2 = b && !failed() ? env->CallObjectMethod(b, set_usage, jint(13)) : nullptr;
+                jobject a = b2 && !failed() ? env->CallObjectMethod(b2, build) : nullptr;
+                if (failed()) a = nullptr;
+                if (a) audio = env->NewGlobalRef(a);
+                if (a) env->DeleteLocalRef(a);
+                if (b2) env->DeleteLocalRef(b2);
+                if (b) env->DeleteLocalRef(b);
+            }
+            if (failed()) audio = nullptr;
+            if (bc) env->DeleteGlobalRef(bc);
+            if (audio) vibrate_audio = with_audio;
+        }
         if (vc) env->DeleteGlobalRef(vc);
 
         effect_class = find("android/os/VibrationEffect");
@@ -1338,10 +1365,11 @@ struct Haptic {
         one_shot = env->GetStaticMethodID(effect_class, "createOneShot", "(JI)Landroid/os/VibrationEffect;");
         if (failed()) one_shot = nullptr;
         nx::log("touch haptics: %s, strength %d%%",
-                !attrs ? "the device's vibrator" : vibrate_attrs ? "the device's vibrator (touch feedback)"
-                                                                 : "the device's vibrator (touch feedback unsupported)",
+                vibrate_attrs ? "the device's vibrator (touch feedback)"
+                              : vibrate_audio ? "the device's vibrator (touch feedback, AudioAttributes)"
+                                              : "the device's vibrator",
                 haptics_percent());
-        return one_shot && (vibrate_attrs || vibrate_plain);
+        return one_shot && (vibrate_attrs || vibrate_audio || vibrate_plain);
     }
 
     void tap(int percent) {  // one click, blockingly (~1 ms of JNI)
@@ -1350,6 +1378,8 @@ struct Haptic {
         if (failed() || !effect) return;
         if (vibrate_attrs)
             env->CallVoidMethod(vibrator, vibrate_attrs, effect, attrs);
+        else if (vibrate_audio)
+            env->CallVoidMethod(vibrator, vibrate_audio, effect, audio);
         else
             env->CallVoidMethod(vibrator, vibrate_plain, effect);
         failed();
