@@ -1,7 +1,7 @@
 1.在原版基础上添加虚拟按键震动和安卓17 16K对齐修复
 
 
-2.简体中文推荐https://github.com/qwqqvq123456/P5R-Android-Plus
+2.简体中文用户推荐https://github.com/qwqqvq123456/P5R-Android-Plus
 
 
 
