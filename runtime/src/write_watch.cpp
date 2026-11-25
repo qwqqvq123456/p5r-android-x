@@ -53,11 +53,6 @@ constexpr uint32_t kRetired = 64;
 Retired g_retired[kRetired];
 std::atomic<uint32_t> g_retired_next{0};
 
-uint64_t page_size() {
-    static const uint64_t p = uint64_t(sysconf(_SC_PAGESIZE));
-    return p;
-}
-
 bool enabled() {
     static const bool on = [] {
         const char* e = std::getenv("NX_WRITE_WATCH");
