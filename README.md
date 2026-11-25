@@ -1,3 +1,4 @@
+在原版基础上添加虚拟按键震动和安卓17 16K对齐修复
 # Persona 5 Royal for Android (native port)
 
 > [!WARNING]
