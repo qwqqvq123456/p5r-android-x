@@ -65,6 +65,7 @@ jobs:
             name="${GITHUB_REF_NAME#v}"
             tag="${GITHUB_REF_NAME}"
             code="$cur_code"
+            expected="$cur_name"
             if [ "$cur_name" != "$name" ]; then
               echo "::warning::tag ${tag} does not match AndroidManifest versionName ${cur_name}"
             fi
@@ -72,6 +73,7 @@ jobs:
             name="${INPUT_VERSION#v}"
             tag="v${name}"
             code=$((cur_code + 1))
+            expected="$name"
           else
             IFS=. read -r major minor patch <<< "$cur_name"
             case "${INPUT_BUMP}" in
@@ -84,8 +86,10 @@ jobs:
             name="${major}.${minor}.${patch}"
             tag="v${name}"
             code=$((cur_code + 1))
+            expected="$name"
           fi
           echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "expected=$expected" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "code=$code" >> "$GITHUB_OUTPUT"
           echo "Version ${name} (versionCode ${code}), tag ${tag}" >> "$GITHUB_STEP_SUMMARY"
@@ -171,6 +175,43 @@ jobs:
 
       - name: Build the APK
         run: bash games/p5r/tools/build_android.sh
+
+      # What a player's phone checks before installing, plus what the launcher needs: the signature, the alignment,
+      # the package and its version, the minSdk and the arm64 libraries + dex. A bad build fails here, not on the phone.
+      - name: Verify the APK
+        env:
+          EXPECTED: ${{ steps.ver.outputs.expected }}
+        run: |
+          set -euo pipefail
+          apk=private/p5r/apk_nce/p5r.apk
+          bt="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}/build-tools/35.0.0"
+          badging="$("$bt/aapt2" dump badging "$apk")"
+          printf '%s\n' "$badging" | sed -n '1,4p'
+          pkg="$(printf '%s\n' "$badging" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")"
+          name="$(printf '%s\n' "$badging" | sed -n "s/^package: name='[^']*' versionCode='[^']*' versionName='\([^']*\)'.*/\1/p")"
+          min="$(printf '%s\n' "$badging" | sed -n "s/^minSdkVersion:'\([0-9]*\)'.*/\1/p")"
+          printf '%s\n' "$badging" | grep -E "^(package|minSdkVersion|targetSdkVersion|native-code)" || true
+          [ "$pkg" = "io.github.p5rrecomp" ] || { echo "::error::unexpected package '$pkg'"; exit 1; }
+          [ "$name" = "$EXPECTED" ] || { echo "::error::APK versionName '$name', expected '$EXPECTED'"; exit 1; }
+          [ "$min" = "29" ] || { echo "::error::minSdk '$min', expected 29"; exit 1; }
+          printf '%s\n' "$badging" | grep -q "native-code: 'arm64-v8a'" || { echo "::error::no arm64-v8a code"; exit 1; }
+          "$bt/apksigner" verify --verbose --print-certs "$apk" | sed -n '1,10p'
+          "$bt/zipalign" -c -p 4 "$apk"
+          echo "zipalign: aligned"
+          listing="$(unzip -l "$apk")"
+          for f in lib/arm64-v8a/libp5r.so lib/arm64-v8a/libp5rimport.so \
+                   lib/arm64-v8a/libspirvharness.so classes.dex AndroidManifest.xml; do
+            printf '%s\n' "$listing" | grep -q " ${f}$" || { echo "::error::missing $f"; exit 1; }
+          done
+          dn="$("$bt/apksigner" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate DN: //p')"
+          echo "APK verified: $(du -h "$apk" | cut -f1), signature \"$dn\""
+          {
+            echo "### APK verified"
+            echo
+            echo "- package \`$pkg\`, versionName \`$name\`, minSdk \`$min\`, native code arm64-v8a"
+            echo "- signature verified (\`$dn\`), zipalign -p 4 aligned"
+            echo "- libp5r.so, libp5rimport.so, libspirvharness.so and classes.dex present"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Package the release
         env:

@@ -1,26 +1,38 @@
 name: Sync upstream
 
 # Keeps this fork level with the upstream project: every night (and on demand) the upstream main branch is merged into
-# this fork's main, our own commits included. A clean merge is pushed straight away; a conflicted one leaves a branch
-# plus a draft pull request, so the conflicts are solved in GitHub's web editor instead of on the runner.
+# this fork's main, our own commits included. A clean merge is pushed straight away and then starts the Release APK
+# workflow (a patch bump, tagged and published); a conflicted one leaves a branch plus a draft pull request, so the
+# conflicts are solved in GitHub's web editor instead of on the runner.
 #
 # Upstream: the repository this one was forked from. Override it with a repository variable UPSTREAM_REPO
 # (Settings -> Secrets and variables -> Actions -> Variables) as "owner/repo", and the branch with UPSTREAM_BRANCH.
-# Optional secret SYNC_TOKEN (a PAT with contents + pull-requests write) when the default GITHUB_TOKEN may not push.
+# Optional secret SYNC_TOKEN (a PAT with contents + pull-requests + actions write) when the default token may not push.
 on:
   schedule:
     - cron: "0 3 * * *"  # 03:00 UTC, 11:00 in China
   workflow_dispatch:
     inputs:
       publish_release:
-        description: "合并成功后，自动递增版本号并发布 APK Release"
+        description: "合并成功后自动发版（递增版本号 → 构建 → 发布 Release）"
         type: boolean
-        default: false
+        default: true
+      upstream_repo:
+        description: "临时指定上游 owner/repo（留空用变量或默认值）"
+        type: string
+        required: false
+        default: ""
+      upstream_branch:
+        description: "临时指定上游分支（留空用变量或默认值）"
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: write
   pull-requests: write
   issues: write
+  actions: write  # to start the Release APK workflow after a merge
 
 concurrency:
   group: sync-upstream
@@ -31,8 +43,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      UPSTREAM_REPO: ${{ vars.UPSTREAM_REPO || 'Brandon04Gonzalez/p5r-android' }}
-      UPSTREAM_BRANCH: ${{ vars.UPSTREAM_BRANCH || 'main' }}
+      UPSTREAM_REPO: ${{ inputs.upstream_repo || vars.UPSTREAM_REPO || 'Brandon04Gonzalez/p5r-android' }}
+      UPSTREAM_BRANCH: ${{ inputs.upstream_branch || vars.UPSTREAM_BRANCH || 'main' }}
       GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
       SYNC_BRANCH: sync/upstream
     steps:
@@ -100,6 +112,10 @@ jobs:
             echo "conflicts=yes" >> "$GITHUB_OUTPUT"
           fi
 
+      # The nightly run always publishes; a manual run does unless the box was cleared.
       - name: Start a release for the merged main
-        if: steps.merge.outputs.merged == 'yes' && inputs.publish_release
-        run: gh workflow run release-apk.yml --ref "${{ github.event.repository.default_branch }}" -f bump=patch
+        if: steps.merge.outputs.merged == 'yes' && (github.event_name == 'schedule' || inputs.publish_release)
+        run: |
+          set -euo pipefail
+          gh workflow run release-apk.yml --ref "${{ github.event.repository.default_branch }}" -f bump=patch
+          echo "Release APK started for the newly merged main." >> "$GITHUB_STEP_SUMMARY"
