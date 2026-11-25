@@ -115,7 +115,7 @@ fi
 
 # -P 16: 16 KiB page alignment, what Android 15 and newer devices (and Android 17 images by default) boot with; a
 # 4 KiB-only package installs but the native libraries may not load.
-"$bt/zipalign" -f -P 16 -p 4 "$out/base.apk" "$out/aligned.apk"
+"$bt/zipalign" -f -P 16 4 "$out/base.apk" "$out/aligned.apk"
 ks="${P5R_KEYSTORE:-$HOME/.android/debug.keystore}"
 ks_pass="${P5R_KEYSTORE_PASSWORD:-android}"
 key_alias="${P5R_KEY_ALIAS:-androiddebugkey}"
