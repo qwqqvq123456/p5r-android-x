@@ -1,4 +1,8 @@
-在原版基础上添加虚拟按键震动和安卓17 16K对齐修复
+1.在原版基础上添加虚拟按键震动和安卓17 16K对齐修复
+2.推荐https://github.com/qwqqvq123456/P5R-Android-Plus
+
+
+
 # Persona 5 Royal for Android (native port)
 
 > [!WARNING]
