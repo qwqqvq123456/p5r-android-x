@@ -127,8 +127,13 @@ void decommit(uint64_t addr, uint64_t size) {
 
 uint64_t kernel_alloc(uint64_t size, uint64_t align) {
     std::lock_guard lk(g_vm_lock);
+    // Host pages, which are not always the Switch's 4 KiB: a 4 KiB-aligned block in the middle of a 16 KiB host page
+    // cannot be mprotected on its own (EINVAL), which is what made the app close as soon as it started on 16 KiB-page
+    // devices (Android 15 and newer, Android 17 images by default).
+    const uint64_t page = plat::page_size();
+    if (align < page) align = page;
     uint64_t a = (g_kernel_next + align - 1) & ~(align - 1);
-    size = (size + 0xFFF) & ~0xFFFull;
+    size = (size + page - 1) & ~(page - 1);
     if (a + size > kKernelBase + kKernelSize) fatal("kernel region exhausted");
     g_kernel_next = a + size;
     if (!commit(a, size)) fatal("kernel_alloc commit failed");

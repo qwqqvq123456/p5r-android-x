@@ -340,7 +340,8 @@ void load_modules(const ModuleInfo* const* mods, size_t count, const std::string
     for (size_t i = 0; i < count; i++) {
         const ModuleInfo* mi = mods[i];
         uint64_t image = mi->data + mi->data_size;
-        uint64_t size = ((mi->bss + mi->bss_size) + 0xFFF) & ~0xFFFull;
+        const uint64_t page = plat::page_size(), pmask = page - 1;
+        uint64_t size = ((mi->bss + mi->bss_size) + pmask) & ~pmask;
         if (!commit(mi->base, size)) fatal("cannot commit module %s", mi->name);
         if (images) {  // native execution: the image the NSO reader made (nce/nso.cpp)
             std::memcpy(reinterpret_cast<void*>(mi->base), images[i], image);

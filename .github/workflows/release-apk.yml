@@ -196,8 +196,8 @@ jobs:
           [ "$min" = "29" ] || { echo "::error::minSdk '$min', expected 29"; exit 1; }
           printf '%s\n' "$badging" | grep -q "native-code: 'arm64-v8a'" || { echo "::error::no arm64-v8a code"; exit 1; }
           "$bt/apksigner" verify --verbose --print-certs "$apk" | sed -n '1,10p'
-          "$bt/zipalign" -c -p 4 "$apk"
-          echo "zipalign: aligned"
+          "$bt/zipalign" -c -P 16 -p 4 "$apk"
+          echo "zipalign: aligned to 16 KiB pages"
           listing="$(unzip -l "$apk")"
           for f in lib/arm64-v8a/libp5r.so lib/arm64-v8a/libp5rimport.so \
                    lib/arm64-v8a/libspirvharness.so classes.dex AndroidManifest.xml; do
@@ -209,7 +209,7 @@ jobs:
             echo "### APK verified"
             echo
             echo "- package \`$pkg\`, versionName \`$name\`, minSdk \`$min\`, native code arm64-v8a"
-            echo "- signature verified (\`$dn\`), zipalign -p 4 aligned"
+            echo "- signature verified (\`$dn\`), zipalign -P 16 aligned (16 KiB pages)"
             echo "- libp5r.so, libp5rimport.so, libspirvharness.so and classes.dex present"
           } >> "$GITHUB_STEP_SUMMARY"
 

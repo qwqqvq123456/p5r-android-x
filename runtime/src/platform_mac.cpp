@@ -104,8 +104,13 @@ bool reserve(uint64_t addr, uint64_t size) {
     return true;
 }
 
+uint64_t page_size() {
+    static const uint64_t p = uint64_t(getpagesize());  // 16 KiB on Apple silicon
+    return p;
+}
+
 bool commit(uint64_t addr, uint64_t size) {
-    uint64_t page = uint64_t(getpagesize()) - 1;  // 16 KiB on Apple silicon
+    uint64_t page = page_size() - 1;
     uint64_t a = addr & ~page, e = (addr + size + page) & ~page;
     return mprotect(reinterpret_cast<void*>(a), e - a, PROT_READ | PROT_WRITE) == 0;
 }
@@ -114,7 +119,7 @@ bool commit(uint64_t addr, uint64_t size) {
 // freed page with it (SIGBUS in Wonder when nn::os's VAMM unmapped single pages). Only whole host pages are
 // released; the freed part of a shared one is zeroed, which is what the guest would see if it maps it again.
 void decommit(uint64_t addr, uint64_t size) {
-    uint64_t page = uint64_t(getpagesize());
+    uint64_t page = page_size();
     uint64_t lo = (addr + page - 1) & ~(page - 1), hi = (addr + size) & ~(page - 1);
     if (lo >= hi) {
         std::memset(reinterpret_cast<void*>(addr), 0, size);

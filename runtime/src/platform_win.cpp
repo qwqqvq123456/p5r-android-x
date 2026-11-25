@@ -37,6 +37,8 @@ bool reserve(uint64_t addr, uint64_t size) {
     return VirtualAlloc(reinterpret_cast<void*>(addr), size, MEM_RESERVE, PAGE_NOACCESS) != nullptr;
 }
 
+uint64_t page_size() { return 4096; }  // dwPageSize on every Windows build
+
 bool commit(uint64_t addr, uint64_t size) {
     uint64_t a = addr & ~0xFFFull, e = (addr + size + 0xFFF) & ~0xFFFull;
     return VirtualAlloc(reinterpret_cast<void*>(a), e - a, MEM_COMMIT, PAGE_READWRITE) != nullptr;

@@ -310,6 +310,7 @@ public class Launcher extends Activity {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        installCrashLog();
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
         // The game's texts and subtitles (runtime language.h): its own language names, as a console lists them.
         options.add(new Option("language", "Idioma de textos y subtítulos", "Text and subtitle language",
@@ -1020,6 +1021,28 @@ public class Launcher extends Activity {
         }
     }
 
+    // A crash in Java would only be a closed window: keep the stack trace next to the game's own log, where
+    // "Export logs" picks it up (the system's copy needs adb). The previous handler still runs, so the crash dialog and
+    // the tombstone stay as they were.
+    void installCrashLog() {
+        final Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+            @Override
+            public void uncaughtException(Thread thread, Throwable error) {
+                try {
+                    java.io.StringWriter text = new java.io.StringWriter();
+                    error.printStackTrace(new java.io.PrintWriter(text));
+                    FileWriter w = new FileWriter(new File(dataDir(), "crash.txt"), false);
+                    w.write("Android " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + "), "
+                            + Build.MANUFACTURER + " " + Build.MODEL + "\n" + text);
+                    w.close();
+                } catch (Throwable ignored) {
+                }
+                if (previous != null) previous.uncaughtException(thread, error);
+            }
+        });
+    }
+
     void exportLogs() {
         try {
             File dl = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
@@ -1045,6 +1068,15 @@ public class Launcher extends Activity {
             if (nxLog.exists()) {
                 sb.append("\n=== nx.log ===\n");
                 try (BufferedReader br = new BufferedReader(new FileReader(nxLog))) {
+                    String line;
+                    while ((line = br.readLine()) != null) sb.append(line).append("\n");
+                }
+            }
+
+            File crashLog = new File(dataDir(), "crash.txt");
+            if (crashLog.exists()) {
+                sb.append("\n=== crash.txt ===\n");
+                try (BufferedReader br = new BufferedReader(new FileReader(crashLog))) {
                     String line;
                     while ((line = br.readLine()) != null) sb.append(line).append("\n");
                 }

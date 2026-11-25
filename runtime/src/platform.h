@@ -19,6 +19,7 @@ constexpr bool kDiagnostics = true;
 #endif
 
 // ---- memory: fixed-address reservations (guest pointers are host pointers) ----
+uint64_t page_size();                        // the host's page size: 4 KiB, or 16 KiB on 16 KiB-page devices
 bool reserve(uint64_t addr, uint64_t size);  // exactly at addr, no access
 bool commit(uint64_t addr, uint64_t size);   // read/write
 void decommit(uint64_t addr, uint64_t size);

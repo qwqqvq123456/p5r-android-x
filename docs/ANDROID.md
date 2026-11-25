@@ -78,6 +78,20 @@ No overlay is drawn yet: the left half of the screen is a virtual stick (drag fr
 right half has four zones: up-left Y, up-right X, down-left B, down-right A; along the top: L, +, ZR, R.
 A Bluetooth controller is the better way to play for now.
 
+## 16 KiB pages
+
+Android 15 and newer devices can be built with 16 KiB memory pages, and Android 17 images boot with them. Two things
+follow, and this port does both:
+
+- the native libraries are 16 KiB aligned (CMake links with `-Wl,-z,max-page-size=16384`, and the APK is aligned with
+  `zipalign -P 16`);
+- the runtime hands guest memory to the kernel in **host** pages, not in the Switch's 4 KiB ones:
+  `plat::page_size()` (`sysconf(_SC_PAGESIZE)`) drives `commit`, `decommit` and `kernel_alloc`. `mprotect` with a
+  4 KiB-aligned address is `EINVAL` on a 16 KiB device, and an unaligned 4 KiB allocation in the middle of a 16 KiB
+  page made the app close as soon as the game started (fixed in 0.5.17).
+
+`nx.log` begins with `android_main: API ..., host page size ...`: that line is the first thing to look at in a report.
+
 ## Known limits
 
 - The address space: the guest ranges sit at 0x40_0000_0000-0x6F_0000_0000, below the 39-bit top where

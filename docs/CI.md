@@ -18,7 +18,7 @@
 
 - `aapt2 dump badging`：包名 `io.github.p5rrecomp`、`versionName` 与本次版本一致、`minSdk 29`、`native-code arm64-v8a`
 - `apksigner verify`：签名链有效（打印证书 DN）
-- `zipalign -c -p 4`：4 字节对齐
+- `zipalign -c -P 16 -p 4`：16 KiB 页对齐（Android 15+ 的 16 KiB 页设备，Android 17 默认）
 - `libp5r.so`、`libp5rimport.so`、`libspirvharness.so`、`classes.dex`、`AndroidManifest.xml` 都在包里
 
 校验结果同时写进该次运行 Summary，方便回溯。

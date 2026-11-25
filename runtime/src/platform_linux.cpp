@@ -102,8 +102,13 @@ bool reserve(uint64_t addr, uint64_t size) {
     return true;
 }
 
+uint64_t page_size() {
+    static const uint64_t p = uint64_t(getpagesize());
+    return p;
+}
+
 bool commit(uint64_t addr, uint64_t size) {
-    uint64_t page = uint64_t(getpagesize()) - 1;
+    uint64_t page = page_size() - 1;
     uint64_t a = addr & ~page, e = (addr + size + page) & ~page;
     return mprotect(reinterpret_cast<void*>(a), e - a, PROT_READ | PROT_WRITE) == 0;
 }
@@ -111,7 +116,7 @@ bool commit(uint64_t addr, uint64_t size) {
 // As on macOS: only whole host pages are released (MADV_DONTNEED gives zero pages back on the next touch); the freed
 // part of a page shared with live data is zeroed instead. With 4 KiB host pages that is the guest's own granule.
 void decommit(uint64_t addr, uint64_t size) {
-    uint64_t page = uint64_t(getpagesize());
+    uint64_t page = page_size();
     uint64_t lo = (addr + page - 1) & ~(page - 1), hi = (addr + size) & ~(page - 1);
     if (lo >= hi) {
         std::memset(reinterpret_cast<void*>(addr), 0, size);
